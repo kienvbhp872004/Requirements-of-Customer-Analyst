@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Loader2, ClipboardList, RefreshCw, GripVertical } from 'lucide-react';
+import { Send, Loader2, ClipboardList, RefreshCw, GripVertical, History } from 'lucide-react';
 import ChatMessage from './ChatMessage';
 import ConfidenceMeter from './ConfidenceMeter';
 import AnalysisResult from './AnalysisResult';
@@ -10,81 +10,100 @@ const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 320;
 const CHAT_MIN = 300;
 const CHAT_MAX = 700;
+const STORAGE_KEY = 'reqsense_session';
+
+// ── localStorage helpers ─────────────────────────────────
+function saveSession(payload) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(payload)); } catch {}
+}
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
 
 export default function ChatWindow() {
-  const [apiHistory, setApiHistory] = useState([]);
-  // displayMsgs: { role, text, options?, topic? }
-  const [displayMsgs, setDisplayMsgs] = useState([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [report, setReport] = useState(null);
-  const [error, setError] = useState(null);
+  const [apiHistory, setApiHistory]       = useState([]);
+  const [displayMsgs, setDisplayMsgs]     = useState([]);
+  const [input, setInput]                 = useState('');
+  const [loading, setLoading]             = useState(false);
+  const [report, setReport]               = useState(null);
+  const [error, setError]                 = useState(null);
+  const [restored, setRestored]           = useState(false); // banner "session restored"
 
-  const [confidence, setConfidence] = useState(0);
+  const [confidence, setConfidence]       = useState(0);
   const [coveredTopics, setCoveredTopics] = useState([]);
-  const [currentTopic, setCurrentTopic] = useState('');
+  const [currentTopic, setCurrentTopic]   = useState('');
   const [readyForReport, setReadyForReport] = useState(false);
 
-  // Panel widths (px)
   const [sidebarW, setSidebarW] = useState(220);
-  const [chatW, setChatW] = useState(420);
+  const [chatW, setChatW]       = useState(420);
 
-  const layoutRef = useRef(null);
-  const bottomRef = useRef(null);
-  const inputRef = useRef(null);
-  // Prevent React StrictMode from calling startSession twice in development
-  const sessionStarted = useRef(false);
+  const layoutRef    = useRef(null);
+  const bottomRef    = useRef(null);
+  const inputRef     = useRef(null);
+  const mountedOnce  = useRef(false);   // guard against StrictMode double-mount
 
+  // ── Mount: restore OR start fresh ───────────────────────
   useEffect(() => {
-    if (sessionStarted.current) return;
-    sessionStarted.current = true;
-    startSession();
-  }, []);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [displayMsgs, loading]);
+    if (mountedOnce.current) return;
+    mountedOnce.current = true;
 
-  // ── Drag-to-resize ──────────────────────────────────────────
-  function useDrag(setter, getNewWidth) {
+    const saved = loadSession();
+    if (saved?.apiHistory?.length > 1) {
+      // Restore previous session
+      setApiHistory(saved.apiHistory);
+      setDisplayMsgs(saved.displayMsgs || []);
+      setConfidence(saved.confidence || 0);
+      setCoveredTopics(saved.coveredTopics || []);
+      setCurrentTopic(saved.currentTopic || '');
+      setReadyForReport(saved.readyForReport || false);
+      setReport(saved.report || null);
+      setRestored(true);
+      setTimeout(() => setRestored(false), 4000); // auto-hide banner after 4s
+    } else {
+      startSession();
+    }
+  }, []);
+
+  // ── Auto-scroll ──────────────────────────────────────────
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [displayMsgs, loading]);
+
+  // ── Persist to localStorage whenever key state changes ───
+  useEffect(() => {
+    if (apiHistory.length > 1) {  // don't save empty/seed-only state
+      saveSession({ apiHistory, displayMsgs, confidence, coveredTopics, currentTopic, readyForReport, report });
+    }
+  }, [apiHistory, displayMsgs, confidence, coveredTopics, currentTopic, readyForReport, report]);
+
+  // ── Drag-to-resize ───────────────────────────────────────
+  function useDrag(setter) {
     return useCallback((e) => {
       e.preventDefault();
       const startX = e.clientX;
       const startW = setter === setSidebarW ? sidebarW : chatW;
+      const min    = setter === setSidebarW ? SIDEBAR_MIN : CHAT_MIN;
+      const max    = setter === setSidebarW ? SIDEBAR_MAX : CHAT_MAX;
 
-      const onMove = (ev) => {
-        const delta = ev.clientX - startX;
-        const next = Math.min(
-          setter === setSidebarW ? SIDEBAR_MAX : CHAT_MAX,
-          Math.max(setter === setSidebarW ? SIDEBAR_MIN : CHAT_MIN, startW + delta)
-        );
-        setter(next);
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
+      const onMove = (ev) => setter(Math.min(max, Math.max(min, startW + ev.clientX - startX)));
+      const onUp   = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     }, [setter, sidebarW, chatW]);
   }
 
   const onDragSidebar = useDrag(setSidebarW);
-  const onDragChat = useDrag(setChatW);
+  const onDragChat    = useDrag(setChatW);
 
-  // ── Session ─────────────────────────────────────────────────
-  async function startSession() {
-    setApiHistory([]); setDisplayMsgs([]); setReport(null); setError(null);
-    setConfidence(0); setCoveredTopics([]); setCurrentTopic(''); setReadyForReport(false);
-    setLoading(true);
-    try {
-      const userMsg = { role: 'user', text: SEED_TEXT };
-      const data = await sendChat([userMsg]);
-      const rawJson = toRaw(data);
-      setApiHistory([userMsg, { role: 'model', text: rawJson }]);
-      setDisplayMsgs([{ role: 'model', text: data.message, options: data.options || null, topic: data.currentTopic }]);
-      applyBA(data);
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); inputRef.current?.focus(); }
-  }
-
+  // ── Session helpers ──────────────────────────────────────
   function toRaw(data) {
     return JSON.stringify({
       message: data.message, confidence: data.confidence,
@@ -94,45 +113,47 @@ export default function ChatWindow() {
   }
 
   function applyBA(data) {
-    // Never let confidence regress (fallback returns 0; guard against stale reset)
-    if (typeof data.confidence === 'number' && data.confidence > 0) {
+    if (typeof data.confidence === 'number' && data.confidence > 0)
       setConfidence(prev => Math.max(prev, data.confidence));
-    }
-    if (Array.isArray(data.coveredTopics) && data.coveredTopics.length > 0) {
+    if (Array.isArray(data.coveredTopics) && data.coveredTopics.length > 0)
       setCoveredTopics(prev => {
         const merged = [...prev];
-        for (const t of data.coveredTopics) {
-          if (!merged.includes(t)) merged.push(t);
-        }
+        for (const t of data.coveredTopics) if (!merged.includes(t)) merged.push(t);
         return merged;
       });
-    }
-    if (data.currentTopic) setCurrentTopic(data.currentTopic);
+    if (data.currentTopic)  setCurrentTopic(data.currentTopic);
     if (data.readyForReport) setReadyForReport(true);
   }
 
-  // ── Send message ────────────────────────────────────────────
+  async function startSession() {
+    clearSession();
+    setApiHistory([]); setDisplayMsgs([]); setReport(null); setError(null); setRestored(false);
+    setConfidence(0); setCoveredTopics([]); setCurrentTopic(''); setReadyForReport(false);
+    setLoading(true);
+    try {
+      const userMsg = { role: 'user', text: SEED_TEXT };
+      const data    = await sendChat([userMsg]);
+      setApiHistory([userMsg, { role: 'model', text: toRaw(data) }]);
+      setDisplayMsgs([{ role: 'model', text: data.message, options: data.options || null, topic: data.currentTopic }]);
+      applyBA(data);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); inputRef.current?.focus(); }
+  }
+
+  // ── Send ─────────────────────────────────────────────────
   async function send(text) {
     const msg = (text ?? input).trim();
     if (!msg || loading) return;
     setInput(''); setError(null);
 
-    setDisplayMsgs(prev => [
-      ...prev.map(m => ({ ...m, options: undefined })),
-      { role: 'user', text: msg },
-    ]);
-    const userMsg = { role: 'user', text: msg };
-    const nextHistory = [...apiHistory, userMsg];
+    setDisplayMsgs(prev => [...prev.map(m => ({ ...m, options: undefined })), { role: 'user', text: msg }]);
+    const nextHistory = [...apiHistory, { role: 'user', text: msg }];
     setLoading(true);
 
     try {
       const data = await sendChat(nextHistory);
-      const rawJson = toRaw(data);
-      setApiHistory([...nextHistory, { role: 'model', text: rawJson }]);
-      setDisplayMsgs(prev => [
-        ...prev,
-        { role: 'model', text: data.message, options: data.options || null, topic: data.currentTopic },
-      ]);
+      setApiHistory([...nextHistory, { role: 'model', text: toRaw(data) }]);
+      setDisplayMsgs(prev => [...prev, { role: 'model', text: data.message, options: data.options || null, topic: data.currentTopic }]);
       applyBA(data);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); inputRef.current?.focus(); }
@@ -141,8 +162,7 @@ export default function ChatWindow() {
   async function generateReport() {
     setLoading(true); setError(null);
     try {
-      const trigger = [...apiHistory, { role: 'user', text: 'GENERATE_REPORT' }];
-      const data = await sendChat(trigger, true);
+      const data = await sendChat([...apiHistory, { role: 'user', text: 'GENERATE_REPORT' }], true);
       setReport(data.content);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -152,18 +172,30 @@ export default function ChatWindow() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
   }
 
+  // Number of real turns (excluding seed)
+  const turnCount = Math.max(0, Math.floor((apiHistory.length - 2) / 2));
+
   return (
     <div className="chat-layout" ref={layoutRef}>
 
       {/* ── Sidebar ── */}
       <div className="sidebar-panel" style={{ width: sidebarW }}>
         <ConfidenceMeter confidence={confidence} coveredTopics={coveredTopics} currentTopic={currentTopic} />
+
+        {/* Session meta */}
+        {turnCount > 0 && (
+          <div className="session-meta">
+            <History size={11} />
+            <span>{turnCount} exchange{turnCount !== 1 ? 's' : ''} · auto-saved</span>
+          </div>
+        )}
+
         <button className="btn--ghost sidebar-new" onClick={startSession}>
           <RefreshCw size={13} /> New session
         </button>
       </div>
 
-      {/* ── Drag handle 1: sidebar ↔ chat ── */}
+      {/* ── Drag handle 1 ── */}
       <div className="drag-handle" onMouseDown={onDragSidebar} title="Drag to resize">
         <GripVertical size={14} />
       </div>
@@ -180,6 +212,14 @@ export default function ChatWindow() {
           </div>
           <span className="chat-panel__online">Online</span>
         </div>
+
+        {/* Restored session banner */}
+        {restored && (
+          <div className="restored-banner">
+            <History size={13} />
+            Session restored — your previous conversation is back.
+          </div>
+        )}
 
         <div className="chat-panel__messages">
           {displayMsgs.map((m, i) => (
@@ -211,7 +251,9 @@ export default function ChatWindow() {
         <div className="chat-panel__footer">
           {readyForReport && !report && (
             <button className="btn--report" onClick={generateReport} disabled={loading}>
-              {loading ? <><Loader2 size={14} className="spin" /> Generating…</> : <><ClipboardList size={15} /> Generate Full Report</>}
+              {loading
+                ? <><Loader2 size={14} className="spin" /> Generating…</>
+                : <><ClipboardList size={15} /> Generate Full Report</>}
             </button>
           )}
           <div className="chat-input-row">
@@ -232,7 +274,7 @@ export default function ChatWindow() {
         </div>
       </div>
 
-      {/* ── Drag handle 2: chat ↔ report ── */}
+      {/* ── Drag handle 2 ── */}
       <div className="drag-handle" onMouseDown={onDragChat} title="Drag to resize">
         <GripVertical size={14} />
       </div>
