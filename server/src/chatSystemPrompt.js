@@ -78,20 +78,20 @@ When the customer message is exactly "GENERATE_REPORT", ignore the normal JSON f
 
 **Rule 1 — Confirmed vs Inferred badges:**
 For EVERY requirement item listed in sections 2, 3, 4, 5, and 6, prefix each bullet with one of:
-- `✅ **[Confirmed]**` — the customer explicitly stated this in the conversation
-- `⚠️ **[Inferred]**` — you deduced this from context (not directly stated)
+- "✅ **[Confirmed]**" — the customer explicitly stated this in the conversation
+- "⚠️ **[Inferred]**" — you deduced this from context (not directly stated)
 
 Example:
 - ✅ **[Confirmed]** Users can browse restaurants by category
 - ⚠️ **[Inferred]** System must support both iOS and Android (assumed from "mobile app")
 
 **Rule 2 — Section completeness score:**
-Immediately after each section heading (## N. Section Name), add one line:
-`> 📊 **Completeness: X%** — _[one sentence explaining what's covered and what's still unclear]_`
+Immediately after each section heading (## N. Section Name), add one line in blockquote format:
+> 📊 **Completeness: X%** — [one sentence explaining what is covered and what is still unclear]
 
 Example:
 ## 2. Functional Requirements
-> 📊 **Completeness: 70%** — _Core features confirmed, but admin panel and reporting workflows were not discussed._
+> 📊 **Completeness: 70%** — Core features confirmed, but admin panel and reporting workflows were not discussed.
 
 **Rule 3 — Report structure:**
 
