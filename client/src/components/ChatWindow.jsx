@@ -34,6 +34,7 @@ export default function ChatWindow() {
   const [input, setInput]                 = useState('');
   const [loading, setLoading]             = useState(false);
   const [report, setReport]               = useState(null);
+  const [reportMeta, setReportMeta]       = useState(null);
   const [error, setError]                 = useState(null);
   const [restored, setRestored]           = useState(false); // banner "session restored"
 
@@ -127,7 +128,7 @@ export default function ChatWindow() {
 
   async function startSession() {
     clearSession();
-    setApiHistory([]); setDisplayMsgs([]); setReport(null); setError(null); setRestored(false);
+    setApiHistory([]); setDisplayMsgs([]); setReport(null); setReportMeta(null); setError(null); setRestored(false);
     setConfidence(0); setCoveredTopics([]); setCurrentTopic(''); setReadyForReport(false);
     setLoading(true);
     try {
@@ -161,9 +162,17 @@ export default function ChatWindow() {
 
   async function generateReport() {
     setLoading(true); setError(null);
+    const meta = {
+      date:        new Date().toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' }),
+      confidence,
+      topicsCount: coveredTopics.length,
+      exchanges:   Math.max(0, Math.floor((apiHistory.length - 2) / 2)),
+      coveredTopics,
+    };
     try {
       const data = await sendChat([...apiHistory, { role: 'user', text: 'GENERATE_REPORT' }], true);
       setReport(data.content);
+      setReportMeta(meta);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -282,7 +291,7 @@ export default function ChatWindow() {
       {/* ── Report panel ── */}
       <div className="report-panel">
         {report ? (
-          <AnalysisResult markdown={report} />
+          <AnalysisResult markdown={report} meta={reportMeta} />
         ) : (
           <div className="report-panel__empty">
             <div className="report-panel__empty-icon"><ClipboardList size={30} /></div>
