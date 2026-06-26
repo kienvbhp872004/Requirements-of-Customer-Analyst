@@ -1,0 +1,17 @@
+{
+  "name": "requirements-of-customer-analyst",
+  "version": "1.0.0",
+  "description": "AI-powered BA Requirement Analyst powered by Gemini",
+  "scripts": {
+    "dev:server": "cd server && node --watch index.js",
+    "dev:client": "cd client && npm run dev",
+    "start:server": "cd server && node index.js",
+    "build:client": "cd client && npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kienvbhp872004/Requirements-of-Customer-Analyst.git"
+  },
+  "author": "",
+  "license": "ISC"
+}
